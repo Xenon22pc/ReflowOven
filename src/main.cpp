@@ -83,11 +83,13 @@ double kd = 250;
 MAX31855soft myMAX31855(21, 19, 18);
 
 thermo_profile_t Sn63Pb37 {
-  { 150,  90  },  // PreHeat
-  { 180,  100 },  // Soak
-  { 250,  40  },  // Reflow
+  { 150,  150  },  // PreHeat
+  { 180,  30 },  // Soak
+  { 225,  35  },  // Reflow
   { 25,   120  },  // Cooling
 };
+
+
 
 void tone(byte pin, int freq, uint16_t time) {
   ledcSetup(0, 2000, 8); // setup beeper
@@ -313,7 +315,6 @@ void setup()   {
     Serial.println(F("MAX6675 error"));
     delay(5000);
   }
-  Serial.println(F("MAX6675 OK"));
 
   tone(BUZZER, 1000, 150);
 
