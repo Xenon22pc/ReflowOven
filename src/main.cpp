@@ -11,15 +11,15 @@
 
 #define DEBUG
 
-enum button {
+enum buttons {
   BUT_NONE = 0,
   BUT_START,
   BUT_TEMP,
   BUT_COOLING,
   BUT_CF,
-};
+}button;
 
-enum galet {
+enum galets {
   PIZZA = 0,
   CRUMPET,
   TOAST,
@@ -28,26 +28,18 @@ enum galet {
   ROST,
   COOKIES,
   REHEAT,
-};
+}galet;
 
-uint8_t button = BUT_NONE;
-uint8_t galet = 0;
-
-void buttonTask(void *pvParameters);
-void SetupGraph(double x, double y, double gx, double gy, double w, double h, double xlo, double xhi, double xinc, double ylo, double yhi, double yinc, String title, String xlabel, String ylabel, unsigned int gcolor, unsigned int acolor, unsigned int tcolor, unsigned int bcolor );
-void Graph(double x, double y, double gx, double gy, double w, double h );
-void GraphDefault(double x, double y, double gx, double gy, double w, double h, unsigned int pcolor );
-void println_Center(String heading, int centerX, int centerY );
-void println_Right(String heading, int centerX, int centerY );
+uint8_t galet_old = 0;
 
 uint8_t UM_Logo[1];
 
 // Save data struct
 typedef struct {
-  boolean valid = false;
-  boolean useFan = false;
+  int valid = false;
+  int useFan = false;
   int fanTimeAfterReflow = 60;
-  byte paste = 0;
+  int paste = 0;
   float power = 1;
   int lookAhead = 6;
   int lookAheadWarm = 1;
@@ -55,8 +47,8 @@ typedef struct {
   long bakeTime = 1200; // 20 mins
   float bakeTemp = 45; // Degrees C
   int bakeTempGap = 3; // Aim for the desiTFT_RED temp minus this value to compensate for overrun
-  bool startFullBlast = false;
-  bool beep = true;
+  int startFullBlast = false;
+  int beep = true;
 } Settings;
 
 // UI and runtime states
@@ -77,14 +69,21 @@ enum states {
   ABORT = 99
 } state;
 
+enum enc_modes {
+  BAKE_MENU_TEMP = 0,
+  BAKE_MENU_TIME = 1,
+
+
+} enc_mode;
+
 const String ver = "2.02";
 bool newSettings = false;
 
 const int heater_ch = 0;
 const int buzzer_ch = 1;
 // TC variables
-unsigned long nextTempRead;
-unsigned long nextTempAvgRead;
+unsigned long nextTempRead = 0;
+unsigned long nextTempAvgRead = 0;
 int avgReadCount = 0;
 
 unsigned long keepFanOnTime = 0;
@@ -140,9 +139,9 @@ int buzzerCount = 5;
 int graphRangeMin_X = 0;
 int graphRangeMin_Y = 30;
 int graphRangeMax_X = -1;
-int graphRangeMax_Y = 165;
-int graphRangeStep_X = 30;
-int graphRangeStep_Y = 15;
+int graphRangeMax_Y = 110;
+int graphRangeStep_X = 45;
+int graphRangeStep_Y = 20;
 
 // UI button positions and sizes
 int buttonPosY[] = { 19, 74, 129, 184 };
@@ -156,9 +155,10 @@ Spline baseCurve;
 // Initiliase a reference for the settings file that we store in flash storage
 Settings set;
 
+
 TFT_eSPI tft = TFT_eSPI();
 MAX31855soft tc(21, 19, 18);
-
+Encoder enc(ENCB, ENCA);
 
 
 // Debug printing functions
@@ -190,6 +190,47 @@ void debug_println(int txt)
 #endif
 }
 
+Settings NVS_store_read(){
+  Settings nvs_set;
+
+  nvs_set.valid = NVS.getInt("valid");
+  nvs_set.useFan = NVS.getInt("useFan");
+  nvs_set.fanTimeAfterReflow = (byte)NVS.getInt("fanTimeAfterReflow");
+  nvs_set.paste = NVS.getInt("paste");
+  nvs_set.power = NVS.getFloat("power");
+  nvs_set.lookAhead = NVS.getInt("lookAhead");
+  nvs_set.lookAheadWarm = NVS.getInt("lookAheadWarm");
+  nvs_set.tempOffset = NVS.getInt("tempOffset");
+  nvs_set.tempOffset = NVS.getInt("tempOffset");
+  nvs_set.bakeTemp = NVS.getFloat("bakeTemp");
+  nvs_set.bakeTempGap = NVS.getInt("bakeTempGap");
+  nvs_set.startFullBlast = NVS.getInt("startFullBlast");
+  nvs_set.beep = NVS.getInt("beep");
+
+  return nvs_set;
+}
+
+void NVS_store_write(Settings nvs_set) {
+  int ok;
+
+  ok += NVS.setInt("valid", nvs_set.valid);
+  ok += NVS.setInt("useFan", nvs_set.useFan);
+  ok += NVS.setInt("fanTimeAfterReflow", nvs_set.fanTimeAfterReflow);
+  ok += NVS.setInt("paste", nvs_set.paste);
+  ok += NVS.setFloat("power", nvs_set.power);
+  ok += NVS.setInt("lookAhead", nvs_set.lookAhead);
+  ok += NVS.setInt("lookAheadWarm", nvs_set.lookAheadWarm);
+  ok += NVS.setInt("tempOffset", nvs_set.tempOffset);
+  ok += NVS.setInt("tempOffset", nvs_set.tempOffset);
+  ok += NVS.setFloat("bakeTemp", nvs_set.bakeTemp);
+  ok += NVS.setInt("bakeTempGap", nvs_set.bakeTempGap);
+  ok += NVS.setInt("startFullBlast", nvs_set.startFullBlast);
+  ok += NVS.setInt("beep", nvs_set.beep);
+  
+  if(ok == 0) debug_println("NVS Read OK");
+}
+
+
 void tone(byte pin, int freq, uint16_t time) {
   ledcSetup(buzzer_ch, 2000, 8); // setup beeper
   ledcAttachPin(pin, buzzer_ch); // attach beeper
@@ -218,7 +259,7 @@ void LoadPaste()
         Length of the graph  ( int, how long if the graph array )
   */
   float baseGraphX[7] = { 1, 90, 180, 210, 240, 270, 300 }; // time
-  float baseGraphY[7] = { 27, 90, 130, 138, 165, 138, 27 }; // value
+  float baseGraphY[7] = { 30, 90, 130, 138, 165, 138, 27 }; // value
 
   solderPaste[0] = ReflowGraph( "CHIPQUIK", "No-Clean Sn42/Bi57.6/Ag0.4", 138, baseGraphX, baseGraphY, ELEMENTS(baseGraphX) );
 
@@ -248,35 +289,30 @@ void LoadPaste()
 // Obtain the temp value of the current profile at time X
 int GetGraphValue( int x )
 {
-  return ( CurrentGraph().reflowTemp[x] );
+  return ( solderPaste[currentGraphIndex].reflowTemp[x] );
 }
 
 int GetGraphTime( int x )
 {
-  return ( CurrentGraph().reflowTime[x] );
+  return ( solderPaste[currentGraphIndex].reflowTime[x] );
 }
 
-// Obtain the current profile
-ReflowGraph CurrentGraph()
-{
-  return solderPaste[ currentGraphIndex ];
-}
 
 // Set the current profile via the array index
 void SetCurrentGraph( int index )
 {
   currentGraphIndex = index;
-  graphRangeMax_X = CurrentGraph().MaxTime();
-  graphRangeMax_Y = CurrentGraph().MaxTempValue() + 5; // extra padding
-  graphRangeMin_Y = CurrentGraph().MinTempValue();
+  graphRangeMax_X = solderPaste[currentGraphIndex].MaxTime();
+  graphRangeMax_Y = solderPaste[currentGraphIndex].MaxTempValue() + 5; // extra padding
+  graphRangeMin_Y = solderPaste[currentGraphIndex].MinTempValue();
 
   debug_print("Setting Paste: ");
-  debug_println( CurrentGraph().n );
-  debug_println( CurrentGraph().t );
+  debug_println( solderPaste[currentGraphIndex].n );
+  debug_println( solderPaste[currentGraphIndex].t );
 
   // Initialise the spline for the profile to allow for smooth graph display on UI
   timeX = 0;
-  baseCurve.setPoints(CurrentGraph().reflowTime, CurrentGraph().reflowTemp, CurrentGraph().reflowTangents, CurrentGraph().len);
+  baseCurve.setPoints(solderPaste[currentGraphIndex].reflowTime, solderPaste[currentGraphIndex].reflowTemp, solderPaste[currentGraphIndex].reflowTangents, solderPaste[currentGraphIndex].len);
   baseCurve.setDegree( Hermite );
 
   // Re-interpolate data based on spline
@@ -304,6 +340,7 @@ void SetCurrentGraph( int index )
 
 void setup()
 {
+  NVS.begin();
   // Setup all GPIO
   pinMode(HEATER, OUTPUT);
   pinMode(TFT_BL, OUTPUT);
@@ -314,10 +351,12 @@ void setup()
   digitalWrite(HEATER, LOW);
   digitalWrite(TFT_BL, HIGH);
 
-  ledcSetup(heater_ch, 50, 8);
+  ledcSetup(heater_ch, 5000, 10);
   ledcAttachPin(HEATER, heater_ch);
+
   SetRelayFrequency( 0 ); // Turn off the SSR - duty cycle of 0
 
+  enc.setTickMode(AUTO);
   xTaskCreateUniversal(buttonTask, "buttonTask", 2048, NULL, 15, NULL,1);
 
 #ifdef DEBUG
@@ -328,14 +367,14 @@ void setup()
   delay(500);
 
   // load settings from FLASH
-  //    set = flash_store.read();
+  set = NVS_store_read();
   
   // If no settings were loaded, initialise data and save
   if ( !set.valid )
   {
     SetDefaults();
     newSettings = true;
-    //    flash_store.write(set);
+    NVS_store_write(set);
   }
 
   debug_println("TFT Begin...");
@@ -377,8 +416,8 @@ void DisplayTemp( bool center)
   if ( center )
   {
     tft.setTextColor( TFT_YELLOW, TFT_BLACK );
-    tft.setTextSize(1); //2
-    println_Center("  " + String( round( currentTemp ) ) + "c  ", tft.width() / 2, ( tft.height() / 2 ) + 10 );
+    tft.setTextSize(3); //2
+    println_Center("  " + String( round( currentTemp ) , 1) + "c  ", tft.width() / 2, ( tft.height() / 2 ) + 10 );
   }
   else
   {
@@ -386,14 +425,14 @@ void DisplayTemp( bool center)
     {
       // display the previous temp in TFT_BLACK to clear it
       tft.setTextColor( TFT_BLACK, TFT_BLACK );
-      tft.setTextSize(1); //2
-      tft.setCursor( 10,  ( tft.height() / 2 ) - 25 );
-      tft.println( String( round( cachedCurrentTemp ) ) + "c" );
+      tft.setTextSize(3); //2
+      tft.setCursor( 10,  ( tft.height() / 2 ) - 10 );
+      tft.println( String( round( cachedCurrentTemp ), 1) + "c");
 
       // display the new temp in TFT_GREEN
       tft.setTextColor( TFT_GREEN, TFT_BLACK );
-      tft.setCursor( 10,  ( tft.height() / 2 ) - 25 );
-      tft.println( String( round( currentTemp ) ) + "c" );
+      tft.setCursor( 10,  ( tft.height() / 2 ) - 10 );
+      tft.println( String( round( currentTemp ), 1 ) + "c" );
 
       // cache the current temp
       cachedCurrentTemp = currentTemp;
@@ -462,16 +501,16 @@ void loop()
         {
           tcWasGood = false;
           tft.setTextColor( TFT_BLACK, TFT_BLACK );
-          tft.setTextSize(1); //2
-          tft.setCursor( 10,  ( tft.height() / 2 ) - 25 );
-          tft.println( String( round( cachedCurrentTemp ) ) + "c" );
+          tft.setTextSize(3); //2
+          tft.setCursor( 10,  ( tft.height() / 2 ) - 10 );
+          tft.println( String( round( cachedCurrentTemp ), 1 ) + "c" );
 
-          tft.fillRect( 5, tft.height() / 2 - 20, 180, 31, TFT_RED );
+          tft.fillRect( 5, tft.height() / 2 - 20, 150, 30, TFT_RED );
         }
         tcWasError = true;
         tft.setTextColor( TFT_WHITE, TFT_RED );
-        tft.setTextSize(1);        
-        tft.setCursor( 10, ( tft.height() / 2 ) - 15 );
+        tft.setTextSize(2);        
+        tft.setCursor( 10, ( tft.height() / 2 ) - 20 );
         tft.println( "TC ERR #" + String( tcError ) );
       }
       else if ( currentTemp > 0 )
@@ -481,7 +520,7 @@ void loop()
         {
           cachedCurrentTemp = 0;
           tcWasError = false;
-          tft.fillRect( 0, tft.height() / 2 - 20, 200, 32, TFT_BLACK );
+          tft.fillRect( 0, tft.height() / 2 - 20, 160, 30, TFT_BLACK );
         }
         tcWasGood = true;
         DisplayTemp(false);
@@ -553,15 +592,15 @@ void loop()
         if ( calibrationState == 0 )
         {
           if ( currentTemp < GetGraphValue(0) )
-            println_Center("WARMING UP", tft.width() / 2, ( tft.height() / 2 ) - 15 );
+            println_Center("WARMING UP", tft.width() / 2, ( tft.height() / 2 ) );
           else
-            println_Center("HEAT UP SPEED", tft.width() / 2, ( tft.height() / 2 ) - 15 );
-
-          println_Center("TARGET " + String( GetGraphValue(1) ) + "c in " + String( GetGraphTime(1) ) + "s", tft.width() / 2, ( tft.height() - 18 ) );
+            println_Center("HEAT UP SPEED", tft.width() / 2, ( tft.height() / 2 ) );
+          tft.setTextSize(1);
+          println_Center("TARGET " + String( GetGraphValue(1) ) + "c in " + String( GetGraphTime(1) ) + "s", tft.width() / 2, ( ( tft.height()/2 ) + 30 ) );
         }
         else if ( calibrationState == 1 )
         {
-          println_Center("COOL DOWN LEVEL", tft.width() / 2, ( tft.height() / 2 ) - 15 );
+          println_Center("COOL DOWN LEVEL", tft.width() / 2, ( tft.height() / 2 ) );
           tft.fillRect( 0, tft.height() - 30, tft.width(), 30, TFT_BLACK );
         }
 
@@ -581,12 +620,12 @@ void loop()
             tft.setTextColor( TFT_WHITE, TFT_BLACK );
           }
 
-          tft.setTextSize(1); //2
-          println_Center(" " + String( calibrationSeconds ) + " secs ", tft.width() / 2, ( tft.height() / 2 ) + 20 );
+          tft.setTextSize(2); //2
+          println_Center(" " + String( calibrationSeconds ) + " secs ", tft.width() / 2, ( tft.height() / 2 ) + 15 );
         }
-        tft.setTextSize(1); //2
+        tft.setTextSize(2); //2
         tft.setTextColor( TFT_YELLOW, TFT_BLACK );
-        println_Center(" " + String( round( currentTemp ) ) + "c ", tft.width() / 2, ( tft.height() / 2 ) + 65 );
+        println_Center(" " + String( round( currentTemp ), 1 ) + "c ", tft.width() / 2, ( tft.height() / 2 ) + 50 );
 
 
       }
@@ -595,12 +634,13 @@ void loop()
         calibrationState = 3;
 
         tft.setTextColor( TFT_GREEN, TFT_BLACK );
-        tft.setTextSize(1);
-        tft.fillRect( 0, (tft.height() / 2 ) - 45, tft.width(), (tft.height() / 2 ) + 45, TFT_BLACK );
-        println_Center("RESULTS!", tft.width() / 2, ( tft.height() / 2 ) - 45 );
+        tft.setTextSize(2);
+        tft.fillRect( 0, (tft.height() / 2 ) - 35, tft.width(), (tft.height() / 2 ) + 45, TFT_BLACK );
+        println_Center("RESULTS!", tft.width() / 2, ( tft.height() / 2 ) - 20 );
 
+        tft.setTextSize(1);
         tft.setTextColor( TFT_WHITE, TFT_BLACK );
-        tft.setCursor( 10, ( tft.height() / 2 ) - 10 );
+        tft.setCursor( 10, ( tft.height() / 2 ) );
         tft.print( "RISE " );
         if ( calibrationUpMatch )
         {
@@ -616,7 +656,7 @@ void loop()
         }
 
         tft.setTextColor( TFT_WHITE, TFT_BLACK );
-        tft.setCursor( 10, ( tft.height() / 2 ) + 20 );
+        tft.setCursor( 10, ( tft.height() / 2 ) + 10 );
         tft.print( "DROP " );
         if ( calibrationDownMatch )
         {
@@ -633,7 +673,7 @@ void loop()
           tft.print( "DROPPED " + String( round(calibrationDropVal * 100) ) + "%") ;
 
           tft.setTextColor( TFT_WHITE, TFT_BLACK );
-          tft.setCursor( 10, ( tft.height() / 2 ) + 40 );
+          tft.setCursor( 10, ( tft.height() / 2 ) + 20 );
           tft.print( "RECOMMEND ADDING FAN") ;
         }
       }
@@ -663,18 +703,18 @@ void loop()
       {
         timeX++;
 
-        if ( timeX > CurrentGraph().completeTime )
+        if ( timeX > solderPaste[currentGraphIndex].completeTime )
         {
           EndReflow();
         }
         else
         {
-          Graph(timeX, currentTemp, 30, 220, 270, 180 );
+          Graph(timeX, currentTemp, 20, 118, 140, 98 );
 
-          if ( timeX < CurrentGraph().fanTime )
+          if ( timeX < solderPaste[currentGraphIndex].fanTime )
           {
-            float wantedTemp = CurrentGraph().wantedCurve[ (int)timeX ];
-            DrawHeading( String( round( currentTemp ) ) + "/" + String( (int)wantedTemp ) + "c", currentPlotColor, TFT_BLACK );
+            float wantedTemp = solderPaste[currentGraphIndex].wantedCurve[ (int)timeX ];
+            DrawHeading( String( round( currentTemp ), 0 ) + "/" + String( (int)wantedTemp ) + "c", currentPlotColor, TFT_BLACK );
           }
         }
       }
@@ -686,13 +726,13 @@ void loop()
 void SetRelayFrequency( int duty )
 {
   // calculate the wanted duty based on settings power override
-  currentDuty = ((float)duty * set.power );
+  currentDuty = ((float)duty * set.power  * 4);
 
   // Write the clamped duty cycle to the RELAY GPIO
-  ledcWrite(heater_ch, constrain( round( currentDuty ), 0, 255));
+  ledcWrite(heater_ch, constrain( round( currentDuty ), 0, 1024));
   
   debug_print("RELAY Duty Cycle: ");
-  debug_println( String( ( currentDuty / 256.0 ) * 100) + "%" + " Using Settings Power: " + String( round( set.power * 100 )) + "%" );
+  debug_println( String( ( currentDuty / 1024.0 ) * 100) + "%" + " Using Settings Power: " + String( round( set.power * 100 )) + "%" );
 }
 
 /*
@@ -829,7 +869,7 @@ void MatchTemp_Bake()
       perc = tempDiff / wantedTemp;
     }
 
-    duty = 256 * perc;
+    duty = 255 * perc;
   }
 
   debug_print( "  Perc: " );
@@ -838,7 +878,7 @@ void MatchTemp_Bake()
   debug_print( duty );
   debug_print( "  " );
 
-  duty = constrain( duty, 0, 256 );
+  duty = constrain( duty, 0, 255 );
   currentPlotColor = TFT_GREEN;
   SetRelayFrequency( duty );
 }
@@ -854,13 +894,13 @@ void MatchTemp()
   float perc = 0;
 
   // if we are still before the main flow cut-off time (last peak)
-  if ( timeX < CurrentGraph().offTime )
+  if ( timeX < solderPaste[currentGraphIndex].offTime )
   {
     // We are looking XXX steps ahead of the ideal graph to compensate for slow movement of oven temp
-    if ( timeX < CurrentGraph().reflowTime[2] )
-      wantedTemp = CurrentGraph().wantedCurve[ (int)timeX + set.lookAheadWarm ];
+    if ( timeX < solderPaste[currentGraphIndex].reflowTime[2] )
+      wantedTemp = solderPaste[currentGraphIndex].wantedCurve[ (int)timeX + set.lookAheadWarm ];
     else
-      wantedTemp = CurrentGraph().wantedCurve[ (int)timeX + set.lookAhead ];
+      wantedTemp = solderPaste[currentGraphIndex].wantedCurve[ (int)timeX + set.lookAhead ];
 
     wantedDiff = (wantedTemp - lastWantedTemp );
     lastWantedTemp = wantedTemp;
@@ -891,7 +931,7 @@ void MatchTemp()
     isCuttoff = false;
 
     // have to passed the fan turn on time?
-    if ( !isFanOn && timeX >= CurrentGraph().fanTime )
+    if ( !isFanOn && timeX >= solderPaste[currentGraphIndex].fanTime )
     {
       debug_print( "COOLDOWN: " );
 
@@ -948,18 +988,18 @@ void MatchTemp()
     base = 32 + ( currentDetla * 15 );
   }
 
-  base = constrain( base, 0, 256 );
+  base = constrain( base, 0, 255 );
 
   debug_print("  Base: ");
   debug_print( base );
   debug_print( " -> " );
 
   duty = base + ( 172 * perc );
-  duty = constrain( duty, 0, 256 );
+  duty = constrain( duty, 0, 255 );
 
   // override for full blast at start only if the current Temp is less than the wanted Temp, and it's in the ram before pre-soak starts.
-  if ( set.startFullBlast && timeX < CurrentGraph().reflowTime[1] && currentTemp < wantedTemp )
-    duty = 256;
+  if ( set.startFullBlast && timeX < solderPaste[currentGraphIndex].reflowTime[1] && currentTemp < wantedTemp )
+    duty = 255;
 
   currentPlotColor = TFT_GREEN;
 
@@ -968,6 +1008,7 @@ void MatchTemp()
 
 void StartFan ( bool start )
 {
+  start = !start;
   if ( set.useFan )
   {
     bool isOn = digitalRead( FAN );
@@ -990,10 +1031,10 @@ void StartFan ( bool start )
 
 void DrawHeading( String lbl, unsigned int acolor, unsigned int bcolor )
 {
-  tft.setTextSize(1); //2
+  tft.setTextSize(2); //2
   tft.setTextColor(acolor , bcolor);
   tft.setCursor(0, 0);
-  tft.fillRect( 0, 0, 220, 40, TFT_BLACK );
+  tft.fillRect(0, 0, 160, 20, TFT_BLACK );
   tft.println( String(lbl) );
 }
 
@@ -1023,31 +1064,24 @@ double ox , oy ;
 
 void DrawBaseGraph()
 {
-  oy = 220;
-  ox = 30;
+  oy = 118;
+  ox = 20;
   timeX = 0;
 
   for ( int ii = 0; ii <= graphRangeMax_X; ii += 5 )
   {
-    GraphDefault(ii, CurrentGraph().wantedCurve[ii], 30, 220, 270, 180, TFT_PINK );
+    GraphDefault(ii, solderPaste[currentGraphIndex].wantedCurve[ii], 20, 118, 140, 98, TFT_PINK );
   }
 
-  ox = 30;
-  oy = 220;
+  ox = 20;
+  oy = 118;
   timeX = 0;
 }
 
 void BootScreen()
 {
   tft.fillScreen(TFT_BLACK);
-
   //tft.drawBitmap( 115, ( tft.height() / 2 ) +20 , UM_Logo, 90, 49, TFT_WHITE);
-
-  tft.setTextColor( TFT_GREEN, TFT_BLACK );
-  tft.setTextSize(2); //2
-
-  println_Center("REFLOW MASTER", tft.width() / 2, ( tft.height() / 2 ) - 38 );
-
   state = MENU;
 }
 
@@ -1056,23 +1090,25 @@ void ShowMenu()
   state = MENU;
 
   cachedCurrentTemp = 0;
-
   SetRelayFrequency( 0 );
 
-  //        set = flash_store.read();
+  set = NVS_store_read();
 
   tft.fillScreen(TFT_BLACK);
 
   tft.setTextColor( TFT_WHITE, TFT_BLACK );
-  tft.setTextSize(2);
+  tft.setTextSize(1);
   tft.setCursor( 10, 10 );
   tft.println( "CURRENT PASTE" );
 
+  debug_print("Cur Graph: ");
+  debug_println(currentGraphIndex);
+  
   tft.setTextColor( TFT_YELLOW, TFT_BLACK );
+  tft.setCursor( 10, 20 );
+  tft.println( solderPaste[currentGraphIndex].n );
   tft.setCursor( 10, 30 );
-  tft.println( CurrentGraph().n );
-  tft.setCursor( 10, 50 );
-  tft.println( String(CurrentGraph().tempDeg) + "deg");
+  tft.println( String(solderPaste[currentGraphIndex].tempDeg) + "deg");
 
   if ( newSettings )
   {
@@ -1083,9 +1119,7 @@ void ShowMenu()
     tft.println("Stomped!!");
   }
 
-  tft.setTextSize(1);
   ShowMenuOptions();
-  
 }
 
 void ShowSettings()
@@ -1164,13 +1198,13 @@ void ShowPaste()
   tft.fillScreen(TFT_BLACK);
 
   tft.setTextColor( TFT_BLUE, TFT_BLACK );
-  tft.setTextSize(1);
+  tft.setTextSize(2);
   tft.setCursor( 10, 10 );
   tft.println( "SWITCH PASTE" );
 
   tft.setTextColor( TFT_WHITE, TFT_BLACK );
 
-  int y = 20;
+  int y = 30;
 
   for ( size_t i = 0; i < ELEMENTS(solderPaste); i++ )
   {
@@ -1200,15 +1234,39 @@ void ShowMenuOptions()
   {
     UpdateSettingsPointer();
   }
+  if(state == MENU) {
+    tft.setTextSize(1);
+    tft.setTextColor( TFT_WHITE, TFT_BLACK );
+    tft.setCursor( 10, tft.height() - 45);
+    tft.println( "CURRENT MODE: " );
+    tft.setTextColor( TFT_YELLOW, TFT_BLACK );
+    tft.setCursor( 10, tft.height() - 35);
+    switch(galet) {
+      case REHEAT:  tft.println( "REFLOW" );  break;
+      case BAKES:   tft.println( "BAKE  " );  break;
+      case COOKIES: tft.println( "COOKIE" );  break;
+      case ROST:    tft.println( "ROST  " );  break;
+      case GRILL:   tft.println( "GRILL " );  break;
+      case TOAST:   tft.println( "TOAST " );  break;
+      case CRUMPET: tft.println( "CRUMPT" );  break;
+      case PIZZA:   tft.println( "PIZZA " );  break;
+    }
+  }
 }
 
 void UpdateBakeMenu()
 {
+  tft.setTextColor( TFT_BLUE, TFT_BLACK );
+  tft.setTextSize(1);
+  tft.fillRect( 0, 10, 10, tft.height() - 10, TFT_BLACK );
+  tft.setCursor( 0, ( 55 + ( 40 * enc_mode ) ) );
+  tft.println(">");
+
   tft.setTextColor( TFT_YELLOW, TFT_BLACK );
   tft.setTextSize(3); //2
   tft.setCursor( 10, 50 );
-  tft.println(String(round(set.bakeTemp)) + "c ");
-  tft.setCursor( 10, 100 );
+  tft.println(String((round(set.bakeTemp)),0) + "c ");
+  tft.setCursor( 10, 90 );
   tft.println(String(set.bakeTime / 60) + "min ");
 }
 
@@ -1226,7 +1284,7 @@ void ShowBakeMenu()
   tft.setCursor( 10, 40 );
   tft.setTextSize(1);
   tft.println("TEMPERATURE");
-  tft.setCursor( 10, 90 );
+  tft.setCursor( 10, 80 );
   tft.println( "TIME");
 
   tft.setTextColor( TFT_WHITE, TFT_BLACK );
@@ -1268,9 +1326,9 @@ void UpdateBake()
   tft.setTextColor( TFT_YELLOW, TFT_BLACK );
   tft.setTextSize(3); //2
   tft.setCursor( 10, 50 );
-  tft.println(String(round(currentTemp * 10) / 10) + "/" + String(round(set.bakeTemp)) + "c");
-  tft.setCursor( 10, 100 );
-  tft.println(String(round(currentBakeTime / 60 + 0.5)) + "/" + String(set.bakeTime / 60) + "min ");
+  tft.println(String((round(currentTemp * 10) / 10), 0) + "/" + String(round(set.bakeTemp), 0) + "c");
+  tft.setCursor( 10, 90 );
+  tft.println(String((round(currentBakeTime / 60 + 0.5)),0) + "/" + String((set.bakeTime / 60)) + "min ");
 
   if ( round( currentTemp ) > round( cachedCurrentTemp ) )
     lastTempDirection = 1;
@@ -1296,7 +1354,7 @@ void StartBake()
   tft.setCursor( 10, 40 );
   tft.setTextSize(1);
   tft.println("CURRENT TEMP");
-  tft.setCursor( 10, 90 );
+  tft.setCursor( 10, 80 );
   tft.println( "TIME LEFT");
 
   UpdateBake();
@@ -1323,15 +1381,11 @@ void BakeDone()
   tft.fillScreen(TFT_BLACK);
 
   tft.setTextColor( TFT_BLUE, TFT_BLACK );
-  tft.setTextSize(1); //2
+  tft.setTextSize(2); //2
   println_Center("BAKING DONE!", tft.width() / 2, ( tft.height() / 2 ) );
 
   tft.setTextColor( TFT_WHITE, TFT_BLACK );
   tft.setTextSize(1);
-
-  // button 0
-  tft.fillRect( tft.width() - 5,  buttonPosY[0], buttonWidth, buttonHeight, TFT_GREEN );
-  println_Right("MENU", tft.width() - 27, buttonPosY[0] + 9 );
 
   delay(750);
   Buzzer( 2000, 500 );
@@ -1401,8 +1455,8 @@ void UpdateSettingsPointer()
   {
     tft.setTextColor( TFT_BLUE, TFT_BLACK );
     tft.setTextSize(1);
-    tft.fillRect( 0, 20, 20, tft.height() - 20, TFT_BLACK );
-    tft.setCursor( 5, ( 50 + ( 20 * ( settings_pointer * 2 ) ) ) );
+    tft.fillRect( 0, 20, 10, tft.height(), TFT_BLACK );
+    tft.setCursor( 5, ( 30 + ( 10 * ( settings_pointer * 2 ) ) ) );
     tft.println(">");
   }
 }
@@ -1420,16 +1474,16 @@ void StartWarmup()
   StartFan( false );
 
   tft.setTextColor( TFT_BLUE, TFT_BLACK );
-  tft.setTextSize(1); //2
-  tft.setCursor( 10, 20 );
+  tft.setTextSize(2); //2
+  tft.setCursor( 10, 10 );
   tft.println( "REFLOW..." );
 
   tft.setTextColor( TFT_GREEN, TFT_BLACK );
-  tft.setTextSize(1); //2
-  println_Center("WARMING UP", tft.width() / 2, ( tft.height() / 2 ) - 30 );
-
+  tft.setTextSize(2); //2
+  println_Center("WARMING UP", tft.width() / 2, ( (tft.height() / 2) - 20 ) );
+  tft.setTextSize(1);
   tft.setTextColor( TFT_WHITE, TFT_BLACK );
-  println_Center("START @ " + String( GetGraphValue(0) ) + "c", tft.width() / 2, ( tft.height() / 2 ) + 50 );
+  println_Center("START @ " + String( GetGraphValue(0)) + "c", tft.width() / 2, ( tft.height() / 2 ) + 30 );
 }
 
 void StartReflow()
@@ -1440,7 +1494,7 @@ void StartReflow()
   ShowMenuOptions();
 
   timeX = 0;
-  SetupGraph(0, 0, 30, 220, 270, 180, graphRangeMin_X, graphRangeMax_X, graphRangeStep_X, graphRangeMin_Y, graphRangeMax_Y, graphRangeStep_Y, "Reflow Temp", " Time [s]", "deg [C]", TFT_DKBLUE, TFT_BLUE, TFT_WHITE, TFT_BLACK );
+  SetupGraph(0, 0, 20, 118, 140, 98, graphRangeMin_X, graphRangeMax_X, graphRangeStep_X, graphRangeMin_Y, graphRangeMax_Y, graphRangeStep_Y, "Reflow Temp", " Time [s]", "deg [C]", TFT_DKBLUE, TFT_BLUE, TFT_WHITE, TFT_BLACK );
 
   DrawHeading( "READY", TFT_WHITE, TFT_BLACK );
   DrawBaseGraph();
@@ -1457,7 +1511,7 @@ void AbortReflow()
 
     tft.fillScreen(TFT_BLACK);
     tft.setTextColor( TFT_RED, TFT_BLACK );
-    tft.setTextSize(1); //2
+    tft.setTextSize(3); //2
     println_Center("ABORT", tft.width() / 2, ( tft.height() / 2 ) );
 
     if ( set.useFan && set.fanTimeAfterReflow > 0 )
@@ -1470,7 +1524,7 @@ void AbortReflow()
     }
 
     delay(1000);
-
+    
     state = MENU;
     ShowMenu();
   }
@@ -1525,7 +1579,7 @@ void ResetSettingsToDefault()
 {
   // set default values again and save
   SetDefaults();
-  //flash_store.write(set);
+  NVS_store_write(set);
 
   // load the default paste
   SetCurrentGraph( set.paste );
@@ -1560,15 +1614,16 @@ void StartOvenCheck()
 
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor( TFT_CYAN, TFT_BLACK );
-  tft.setTextSize(1);
-  tft.setCursor( 10, 20 );
+  tft.setTextSize(2);
+  tft.setCursor( 10, 10 );
   tft.println( "OVEN CHECK" );
 
+  tft.setTextSize(1);
   tft.setTextColor( TFT_YELLOW, TFT_BLACK );
+  tft.setCursor( 10, 30 );
+  tft.println( solderPaste[currentGraphIndex].n );
   tft.setCursor( 10, 40 );
-  tft.println( CurrentGraph().n );
-  tft.setCursor( 10, 60 );
-  tft.println( String(CurrentGraph().tempDeg) + "deg");
+  tft.println( String(solderPaste[currentGraphIndex].tempDeg) + "deg");
 
   ShowMenuOptions();
 }
@@ -1583,7 +1638,7 @@ void ShowOvenCheck()
 
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor( TFT_CYAN, TFT_BLACK );
-  tft.setTextSize(1);
+  tft.setTextSize(2);
   tft.setCursor( 10, 10 );
   tft.println( "OVEN CHECK" );
 
@@ -1593,7 +1648,7 @@ void ShowOvenCheck()
   ShowMenuOptions();
 
   tft.setTextSize(1);
-  tft.setCursor( 10, 30 );
+  tft.setCursor( 0, 30 );
   tft.setTextColor( TFT_YELLOW, TFT_BLACK );
 
   tft.println( " Oven Check allows");
@@ -1624,13 +1679,12 @@ void ShowResetDefaults()
 {
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor( TFT_WHITE, TFT_BLACK );
-  tft.setTextSize(1);
+  tft.setTextSize(2);
   tft.setCursor( 10, 50 );
 
   tft.setTextColor( TFT_WHITE, TFT_BLACK );
   tft.print( "RESET SETTINGS" );
-  tft.setTextSize(1); //2
-  tft.setCursor( 10, 60 );
+  tft.setCursor( 10, 70 );
   tft.println( "ARE YOU SURE?" );
 
   state = SETTINGS_RESET;
@@ -1639,7 +1693,8 @@ void ShowResetDefaults()
   tft.setTextSize(1);
   tft.setTextColor( TFT_GREEN, TFT_BLACK );
   tft.fillRect( 0, tft.height() - 40, tft.width(), 40, TFT_BLACK );
-  println_Center("Settings restore cannot be undone!", tft.width() / 2, tft.height() - 20 );
+  tft.setCursor( 10, 100 );
+  tft.println("Settings restore cannot be undone!");
 }
 
 void UpdateSettingsFan( int posY )
@@ -1751,33 +1806,22 @@ void UpdateSettingsTempOffset( int posY )
 
 unsigned long nextButtonPress = 0;
 
-void button0Press()
+void button0Press()   //BUT_TEMP
 {
   if ( nextButtonPress < millis() )
   {
-    nextButtonPress = millis() + 100;
+    nextButtonPress = millis() + 150;
     Buzzer( 2000, 50 );
 
-    if ( state == MENU )
+    if ( state == BAKE_MENU )
     {
-      // Only allow reflow start if there is no TC error
-      if ( tcError == 0 )
-        StartWarmup();
-      else
-        Buzzer( 100, 250 );
-    }
-    else if ( state == BAKE_MENU )
-    {
-      //flash_store.write(set);
-      state = BAKE;
-      StartBake();
-    }
-    else if ( state == WARMUP || state == REFLOW || state == OVENCHECK_START || state == BAKE )
-    {
-      AbortReflow();
+      if(enc_mode == BAKE_MENU_TEMP) enc_mode = BAKE_MENU_TIME;
+      else if(enc_mode == BAKE_MENU_TIME) enc_mode = BAKE_MENU_TEMP;
+      UpdateBakeMenu();
     }
     else if ( state == FINISHED || state == BAKE_DONE )
     {
+      
       ShowMenu();
     }
     else if ( state == SETTINGS )
@@ -1850,7 +1894,10 @@ void button0Press()
       if ( set.paste != settings_pointer )
       {
         set.paste = settings_pointer;
+        debug_print("Paste set:");
+        debug_println(set.paste);
         SetCurrentGraph( set.paste );
+        debug_println("Paste SET - OK");
         ShowPaste();
       }
     }
@@ -1865,25 +1912,59 @@ void button0Press()
   }
 }
 
-void button1Press()
+void button1Press()   //BUT_START
 {
   if ( nextButtonPress < millis() )
   {
-    nextButtonPress = millis() + 100;
+    nextButtonPress = millis() + 150;
     Buzzer( 2000, 50 );
 
     if ( state == MENU )
     {
-      // Only allow reflow start if there is no TC error
-      if ( tcError == 0 )
-        ShowBakeMenu();
-      else
-        Buzzer( 100, 250 );
+      switch(galet) {
+        case REHEAT:
+          // Only allow reflow start if there is no TC error
+          if ( tcError == 0 ) StartWarmup();
+          else                Buzzer( 100, 250 );
+        break;
+
+        case BAKES:
+          // Only allow reflow start if there is no TC error
+          if ( tcError == 0 ) ShowBakeMenu();
+          else                Buzzer( 100, 250 );
+        break;
+
+      }
+    }
+    else if ( state == BAKE_MENU )
+    {
+      state = BAKE;
+      StartBake();
+    }
+  }
+}
+
+void button2Press()   //BUT_COOLING
+{
+  if ( nextButtonPress < millis() )
+  {
+    nextButtonPress = millis() + 150;
+    Buzzer( 2000, 50 );
+
+    if ( state == MENU )
+    {
+      settings_pointer = 0;
+      ShowSettings();
+    }
+    else if ( state == WARMUP || state == REFLOW || state == OVENCHECK_START || state == BAKE )
+    {
+      AbortReflow();
     }
     else if ( state == SETTINGS ) // leaving settings so save
     {
       // save data in flash
-      //flash_store.write(set);
+      NVS_store_write(set);
+      
       ShowMenu();
     }
     else if ( state == SETTINGS_PASTE || state == SETTINGS_RESET )
@@ -1897,52 +1978,19 @@ void button1Press()
     }
     else if ( state == BAKE_MENU) // cancel oven check
     {
-      //flash_store.write(set);
+      NVS_store_write(set);
       ShowMenu();
     }
-  }
-}
-
-void button2Press()
-{
-  if ( nextButtonPress < millis() )
-  {
-    nextButtonPress = millis() + 100;
-    Buzzer( 2000, 50 );
-
-    if ( state == MENU )
-    {
-      settings_pointer = 0;
-      ShowSettings();
-    }
-    else if ( state == BAKE_MENU )
-    {
-      set.bakeTemp += 1;
-      if ( set.bakeTemp > maxBakeTemp )
-        set.bakeTemp = minBakeTemp;
-
-      UpdateBakeMenu();
-    }
-    else if ( state == SETTINGS )
-    {
-      settings_pointer = constrain( settings_pointer - 1, 0, 8 );
-      ShowMenuOptions();
-      //UpdateSettingsPointer();
-    }
-    else if ( state == SETTINGS_PASTE )
-    {
-      settings_pointer = constrain( settings_pointer - 1, 0, (int) ELEMENTS(solderPaste) - 1 );
-      UpdateSettingsPointer();
-    }
+    
   }
 }
 
 
-void button3Press()
+void button3Press()   //BUT_CF
 {
   if ( nextButtonPress < millis() )
   {
-    nextButtonPress = millis() + 100;
+    nextButtonPress = millis() + 150;
     Buzzer( 2000, 50 );
 
     if ( state == MENU )
@@ -1953,11 +2001,24 @@ void button3Press()
       else
         Buzzer( 100, 250 );
     }
-    else if ( state == BAKE_MENU )
+  }
+}
+
+void encRight() {
+    Buzzer( 2000, 50 );
+    if ( state == BAKE_MENU && enc_mode == BAKE_MENU_TEMP)
+    {
+      set.bakeTemp += 1;
+      if ( set.bakeTemp > maxBakeTemp )
+        set.bakeTemp = minBakeTemp;
+
+      UpdateBakeMenu();
+    }
+    else if ( state == BAKE_MENU && enc_mode == BAKE_MENU_TIME)
     {
       set.bakeTime += 300;
       if ( set.bakeTime > maxBakeTime )
-        set.bakeTime = minBakeTime;
+        set.bakeTime = maxBakeTime;
 
       UpdateBakeMenu();
     }
@@ -1972,14 +2033,45 @@ void button3Press()
       settings_pointer = constrain( settings_pointer + 1, 0, (int) ELEMENTS(solderPaste) - 1 );
       UpdateSettingsPointer();
     }
-  }
+
 }
 
 
-void buttonTask(void *pvParameters ){ 
+void encLeft() {
+  Buzzer( 2000, 50 );
+  if ( state == BAKE_MENU && enc_mode == BAKE_MENU_TEMP)
+  {
+    set.bakeTemp -= 1;
+    if ( set.bakeTemp < minBakeTemp )
+      set.bakeTemp = minBakeTemp;
+
+    UpdateBakeMenu();
+  }
+  else if ( state == BAKE_MENU && enc_mode == BAKE_MENU_TIME)
+  {
+    set.bakeTime -= 300;
+    if ( set.bakeTime < minBakeTime )
+      set.bakeTime = minBakeTime;
+
+    UpdateBakeMenu();
+  }
+  else if ( state == SETTINGS )
+  {
+    settings_pointer = constrain( settings_pointer - 1, 0, 8 );
+    ShowMenuOptions();
+    //UpdateSettingsPointer();
+  }
+  else if ( state == SETTINGS_PASTE )
+  {
+    settings_pointer = constrain( settings_pointer - 1, 0, (int) ELEMENTS(solderPaste) - 1 );
+    UpdateSettingsPointer();
+  }
+
+}
+
+void buttonTask(void *pvParameters ) { 
   uint16_t adc_but = 0;
   uint16_t adc_galet = 0;
-  uint8_t long_cnt = 0;
 
   while(1) {
     adc_but = analogRead(BUTTONS); 
@@ -2004,8 +2096,15 @@ void buttonTask(void *pvParameters ){
     if(button == BUT_TEMP)    button0Press();
     if(button == BUT_COOLING) button2Press();
     if(button == BUT_CF)      button3Press();
+    
+    if (enc.isRight()) encRight();
+    if (enc.isLeft()) encLeft();
 
-    vTaskDelay(100);
+    if(galet_old != galet) {
+      galet_old = galet;
+      ShowMenuOptions();
+    }
+    vTaskDelay(10);
   }
   vTaskDelete(NULL);
 }
@@ -2038,8 +2137,8 @@ void SetupGraph(double x, double y, double gx, double gy, double w, double h, do
 
     tft.setTextSize(1);
     tft.setTextColor(tcolor, bcolor);
-    tft.setCursor(gx - 25, temp);
-    println_Right(String(round(i)), gx - 25, temp );
+    tft.setCursor(gx - 20, temp);
+    println_Right(String(round(i), 0), gx - 20, temp );
   }
 
   // draw x scale
@@ -2057,29 +2156,29 @@ void SetupGraph(double x, double y, double gx, double gy, double w, double h, do
 
     tft.setTextSize(1);
     tft.setTextColor(tcolor, bcolor);
-    tft.setCursor(temp, gy + 10);
+    tft.setCursor(temp, gy );
 
     if ( i <= xhi - xinc )
-      println_Center(String(round(i)), temp, gy + 10 );
+      println_Center(String(round(i), 0), temp, gy + 6 );
     else
-      println_Center(String(round(xhi)), temp, gy + 10 );
+      println_Center(String(round(xhi), 0), temp, gy + 6);
   }
 
   //now draw the labels
   tft.setTextSize(1);
   tft.setTextColor(tcolor, bcolor);
-  tft.setCursor(gx , gy - h - 30);
+  tft.setCursor(gx , gy - h - 10);
   tft.println(title);
 
   tft.setTextSize(1);
   tft.setTextColor(acolor, bcolor);
-  tft.setCursor(w - 25 , gy - 10);
+  tft.setCursor(w - 40 , gy - 10);
   tft.println(xlabel);
 
-  tft.setRotation(0);
+  tft.setRotation(2);
   tft.setTextSize(1);
   tft.setTextColor(acolor, bcolor);
-  tft.setCursor(w - 116, 34 );
+  tft.setCursor(h - 35, 22 );
   tft.println(ylabel);
   tft.setRotation(3);
 }
@@ -2094,7 +2193,7 @@ void Graph(double x, double y, double gx, double gy, double w, double h )
   if ( timeX < 2 )
     oy = min( oy, y );
 
-  y = min( (int)y, 220 ); // bottom of graph!
+  y = min( (int)y, 118 ); // bottom of graph!
 
   //  tft.fillRect( ox-1, oy-1, 3, 3, currentPlotColor );
 

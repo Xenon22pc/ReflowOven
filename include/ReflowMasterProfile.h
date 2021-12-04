@@ -33,7 +33,7 @@ class ReflowGraph
       len = min( 10, arraySize );
 
       Serial.print( nm );
-      Serial.print(" len? ");
+      Serial.print(" len: ");
       Serial.println(len);
 
       fanTime = flowX[ len - 3 ];

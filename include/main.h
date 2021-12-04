@@ -2,13 +2,21 @@
 #include <TFT_eSPI.h> 
 #include <SPI.h>
 #include <MAX31855soft.h>
+#include <GyverEncoder.h>
+#include <ArduinoNVS.h>
 #include "spline.h"
 #include "ReflowMasterProfile.h"
 
+
+void buttonTask(void *pvParameters);
+void SetupGraph(double x, double y, double gx, double gy, double w, double h, double xlo, double xhi, double xinc, double ylo, double yhi, double yinc, String title, String xlabel, String ylabel, unsigned int gcolor, unsigned int acolor, unsigned int tcolor, unsigned int bcolor );
+void Graph(double x, double y, double gx, double gy, double w, double h );
+void GraphDefault(double x, double y, double gx, double gy, double w, double h, unsigned int pcolor );
+void println_Center(String heading, int centerX, int centerY );
+void println_Right(String heading, int centerX, int centerY );
 void LoadPaste();
 int GetGraphValue( int x );
 int GetGraphTime( int x );
-ReflowGraph CurrentGraph();
 void SetCurrentGraph( int index );
 void DisplayTemp( bool center = false );
 void SetRelayFrequency( int duty );
