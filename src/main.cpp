@@ -125,6 +125,7 @@ bool tcWasError = false;
 bool tcWasGood = true;
 float currentDuty = 0;
 float currentTemp = 0;
+float prevTemp = 0;
 float cachedCurrentTemp = 0;
 float currentTempAvg = 0;
 float lastTemp = -1;
@@ -263,22 +264,22 @@ void LoadPaste()
 
   solderPaste[0] = ReflowGraph( "CHIPQUIK", "No-Clean Sn42/Bi57.6/Ag0.4", 138, baseGraphX, baseGraphY, ELEMENTS(baseGraphX) );
 
-  float baseGraphX1[7] = { 1, 90, 180, 225, 240, 270, 300 }; // time
+  float baseGraphX1[7] = { 1,  90, 180,  225, 240, 270, 300 }; // time
   float baseGraphY1[7] = { 25, 150, 175, 190, 210, 125, 50 }; // value
 
   solderPaste[1] = ReflowGraph( "CHEMTOOLS L", "No Clean 63CR218 Sn63/Pb37", 183, baseGraphX1, baseGraphY1, ELEMENTS(baseGraphX1) );
 
-  float baseGraphX2[6] = { 1, 75, 130, 180, 210, 250 }; // time
+  float baseGraphX2[6] = { 1,   75, 130, 180, 210, 250 }; // time
   float baseGraphY2[6] = { 25, 150, 175, 210, 150, 50 }; // value
 
   solderPaste[2] = ReflowGraph( "CHEMTOOLS S", "No Clean 63CR218 Sn63/Pb37", 183, baseGraphX2, baseGraphY2, ELEMENTS(baseGraphX2) );
 
-  float baseGraphX3[7] = { 1, 60, 120, 160, 210, 260, 310 }; // time
-  float baseGraphY3[7] = { 25, 105, 150, 150, 220, 150, 20 }; // value
+  float baseGraphX3[7] = { 1,   60, 120, 160, 210, 260, 310 }; // time
+  float baseGraphY3[7] = { 25, 105, 150, 175, 235, 150, 20 }; // value
 
-  solderPaste[3] = ReflowGraph( "DOC SOLDER", "No Clean Sn63/Pb36/Ag2", 187, baseGraphX3, baseGraphY3, ELEMENTS(baseGraphX3) );
+  solderPaste[3] = ReflowGraph( "Mechanic XG-50", "No Clean Sn63/Pb36", 183, baseGraphX3, baseGraphY3, ELEMENTS(baseGraphX3) );
 
-  float baseGraphX4[6] = { 1, 90, 165, 225, 330, 360 }; // time
+  float baseGraphX4[6] = { 1,  90,  165, 225, 330, 360 }; // time
   float baseGraphY4[6] = { 25, 150, 175, 235, 100, 25 }; // value
 
   solderPaste[4] = ReflowGraph( "CHEMTOOLS SAC305 HD", "Sn96.5/Ag3.0/Cu0.5", 225, baseGraphX4, baseGraphY4, ELEMENTS(baseGraphX4) );
@@ -804,9 +805,20 @@ void ReadCurrentTempAvg()
 
   rawData = tc.readRawData();
   float curTemp = tc.getTemperature(rawData);
-  tcError = (curTemp == MAX31855_ERROR) ? 1 : 0;
+  //-------Fix отвала термопары 06.12.21--------
+  if(curTemp == MAX31855_ERROR){
+    tcError = 1;
+    currentTempAvg += prevTemp + set.tempOffset;
+  }
+  else {
+    tcError = 0;
+    prevTemp = curTemp;
+    currentTempAvg += curTemp + set.tempOffset;
+  }
+  //-------Fix_end--------
 
-  currentTempAvg += curTemp + set.tempOffset;
+  //tcError = (curTemp == MAX31855_ERROR) ? 1 : 0;
+  //currentTempAvg += curTemp + set.tempOffset;
   avgReadCount++;
 }
 
@@ -817,9 +829,21 @@ void ReadCurrentTemp()
 
   rawData = tc.readRawData();
   float curTemp = tc.getTemperature(rawData);
-  tcError = (curTemp == MAX31855_ERROR) ? 1 : 0;
+  //tcError = (curTemp == MAX31855_ERROR) ? 1 : 0;
 
-  currentTemp = curTemp + set.tempOffset;
+  //-------Fix отвала термопары 06.12.21--------
+  if(curTemp == MAX31855_ERROR){
+    tcError = 1;
+    currentTemp = prevTemp + set.tempOffset;
+  }
+  else {
+    tcError = 0;
+    prevTemp = curTemp;
+    currentTemp = curTemp + set.tempOffset;  
+  }
+  //-------Fix_end--------
+
+  //currentTemp = curTemp + set.tempOffset;
   currentTemp =  constrain(currentTemp, -10, 350);
 
   debug_print("TC Read: ");
@@ -1494,7 +1518,7 @@ void StartReflow()
   ShowMenuOptions();
 
   timeX = 0;
-  SetupGraph(0, 0, 20, 118, 140, 98, graphRangeMin_X, graphRangeMax_X, graphRangeStep_X, graphRangeMin_Y, graphRangeMax_Y, graphRangeStep_Y, "Reflow Temp", " Time [s]", "deg [C]", TFT_DKBLUE, TFT_BLUE, TFT_WHITE, TFT_BLACK );
+  SetupGraph(0, 0, 20, 118, 140, 98, graphRangeMin_X, graphRangeMax_X, graphRangeStep_X, graphRangeMin_Y, graphRangeMax_Y, graphRangeStep_Y, "Reflow Temp", " Time [s]", "deg [C]", TFT_DARKCYAN, TFT_BLUE, TFT_WHITE, TFT_BLACK );
 
   DrawHeading( "READY", TFT_WHITE, TFT_BLACK );
   DrawBaseGraph();
